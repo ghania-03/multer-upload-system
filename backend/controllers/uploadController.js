@@ -1,5 +1,9 @@
+const fs = require("fs");
+const path = require("path");
+
 const User = require("../models/User");
 const buildPublicUrl = require("../config/uploadUrl");
+const extractRelativePath = require("../config/uploadPath");
 
 const uploadProfileImage = async (req, res) => {
   try {
@@ -10,23 +14,47 @@ const uploadProfileImage = async (req, res) => {
       });
     }
 
-    const publicUrl = buildPublicUrl(req, req.file);
-
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      {
-        profileImage: publicUrl
-      },
-      {
-        new: true
-      }
-    );
+    // 1. Get the existing user
+    const user = await User.findById(req.user._id);
 
     if (!user) {
       return res.status(404).json({
         success: false,
         message: "User not found."
       });
+    }
+
+    // 2. Keep the old profile image URL
+    const oldProfileImage = user.profileImage;
+
+    // 3. Build the new public URL
+    const newProfileImage = buildPublicUrl(req, req.file);
+
+    // 4. Update MongoDB first
+    user.profileImage = newProfileImage;
+
+    await user.save();
+
+    // 5. Delete old physical file only after DB update succeeds
+    if (oldProfileImage) {
+      const relativePath = extractRelativePath(oldProfileImage);
+
+      const oldFilePath = path.join(
+        __dirname,
+        "..",
+        "uploads",
+        relativePath
+      );
+
+      if (fs.existsSync(oldFilePath)) {
+        fs.unlink(oldFilePath, (error) => {
+          if (error) {
+            console.error("Failed to delete old profile image:", error);
+          } else {
+            console.log("Old profile image deleted.");
+          }
+        });
+      }
     }
 
     res.status(201).json({

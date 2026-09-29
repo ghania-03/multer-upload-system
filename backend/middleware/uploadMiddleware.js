@@ -13,6 +13,8 @@ const storage = multer.diskStorage({
       file.fieldname === "profile" ? "profile" : "documents";
 
     const uploadPath = path.join(
+      __dirname,
+      "..",
       "uploads",
       userFolderName,
       subFolder
@@ -25,15 +27,12 @@ const storage = multer.diskStorage({
 
   filename: function (req, file, cb) {
     const uniqueName =
-      Date.now() +
-      "-" +
-      path.basename(file.originalname);
+      Date.now() + "-" + path.basename(file.originalname);
 
     cb(null, uniqueName);
   }
 });
 
-// Profile: images only
 const profileFilter = (req, file, cb) => {
   if (!file.mimetype.startsWith("image/")) {
     return cb(
@@ -44,7 +43,6 @@ const profileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-// Documents: PDF + images
 const documentFilter = (req, file, cb) => {
   const allowedTypes = [
     "application/pdf",
@@ -53,7 +51,9 @@ const documentFilter = (req, file, cb) => {
   ];
 
   if (!allowedTypes.includes(file.mimetype)) {
-    return cb(new Error("Only PDF, JPG, JPEG and PNG files are allowed."));
+    return cb(
+      new Error("Only PDF, JPG, JPEG and PNG files are allowed.")
+    );
   }
 
   cb(null, true);
@@ -62,7 +62,6 @@ const documentFilter = (req, file, cb) => {
 const uploadProfile = multer({
   storage,
   fileFilter: profileFilter,
-
   limits: {
     fileSize: 2 * 1024 * 1024
   }
@@ -71,7 +70,6 @@ const uploadProfile = multer({
 const uploadDocument = multer({
   storage,
   fileFilter: documentFilter,
-
   limits: {
     fileSize: 10 * 1024 * 1024
   }

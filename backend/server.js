@@ -79,6 +79,8 @@ const startServer = async () => {
 
 if (process.env.VERCEL !== "1") {
   startServer();
+} else {
+  connectDB();
 }
 
 // Export Express app for Vercel

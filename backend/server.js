@@ -4,12 +4,10 @@ dotenv.config();
 const express = require("express");
 const multer = require("multer");
 const cors = require("cors");
-const path = require("path");
 
 const connectDB = require("./config/db");
 const createTestUser = require("./config/testUser");
 const uploadRoutes = require("./routes/uploadRoutes");
-
 
 const app = express();
 
@@ -33,12 +31,6 @@ app.use((req, res, next) => {
 
   next();
 });
-
-// Serve uploaded files
-// app.use(
-//   "/uploads",
-//   express.static(path.join(__dirname, "uploads"))
-// );
 
 // Upload routes
 app.use("/api/uploads", uploadRoutes);
@@ -73,6 +65,7 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
+// Local development
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
@@ -84,4 +77,9 @@ const startServer = async () => {
   });
 };
 
-startServer();
+if (process.env.VERCEL !== "1") {
+  startServer();
+}
+
+// Export Express app for Vercel
+module.exports = app;

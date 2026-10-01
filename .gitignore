@@ -5,6 +5,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+.env.local
+.env.*.local
 
 # Uploaded files
 backend/uploads/
@@ -12,6 +14,7 @@ backend/uploads/
 # Build files
 frontend/dist/
 frontend/build/
+backend/dist/
 
 # Logs
 *.log

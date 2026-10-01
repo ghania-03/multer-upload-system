@@ -1,9 +1,29 @@
-const fs = require("fs");
-const path = require("path");
-
 const User = require("../models/User");
-const buildPublicUrl = require("../config/uploadUrl");
-const extractRelativePath = require("../config/uploadPath");
+
+const {
+  uploadBuffer,
+  deleteCloudinaryFile
+} = require("../config/cloudinaryUpload");
+
+const sanitizeName = (name) => {
+  return name
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "");
+};
+
+const getUserFolder = (user) => {
+  return `multer-upload-system/${user._id}_${sanitizeName(
+    user.fullName
+  )}`;
+};
+
+const getFileName = (originalName) => {
+  const nameWithoutExtension = originalName
+    .replace(/\.[^/.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "-");
+
+  return `${Date.now()}-${nameWithoutExtension}`;
+};
 
 const uploadProfileImage = async (req, res) => {
   try {
@@ -14,7 +34,6 @@ const uploadProfileImage = async (req, res) => {
       });
     }
 
-    // 1. Get the existing user
     const user = await User.findById(req.user._id);
 
     if (!user) {
@@ -24,48 +43,67 @@ const uploadProfileImage = async (req, res) => {
       });
     }
 
-    // 2. Keep the old profile image URL
-    const oldProfileImage = user.profileImage;
+    const oldProfileImagePublicId = user.profileImagePublicId;
+    const oldProfileImageResourceType =
+      user.profileImageResourceType;
 
-    // 3. Build the new public URL
-    const newProfileImage = buildPublicUrl(req, req.file);
+    const folder = `${getUserFolder(user)}/profile`;
 
-    // 4. Update MongoDB first
-    user.profileImage = newProfileImage;
+    const result = await uploadBuffer(req.file.buffer, {
+      folder,
+      public_id: getFileName(req.file.originalname),
+      resource_type: "auto"
+    });
 
-    await user.save();
+    user.profileImage = result.secure_url;
+    user.profileImagePublicId = result.public_id;
+    user.profileImageResourceType = result.resource_type;
 
-    // 5. Delete old physical file only after DB update succeeds
-    if (oldProfileImage) {
-      const relativePath = extractRelativePath(oldProfileImage);
+    try {
+      await user.save();
+    } catch (error) {
+      // If MongoDB update fails, remove the newly uploaded
+      // Cloudinary file so it does not become orphaned.
+      await deleteCloudinaryFile(
+        result.public_id,
+        result.resource_type
+      ).catch((deleteError) => {
+        console.error(
+          "Failed to clean up new Cloudinary profile image:",
+          deleteError
+        );
+      });
 
-      const oldFilePath = path.join(
-        __dirname,
-        "..",
-        "uploads",
-        relativePath
-      );
+      throw error;
+    }
 
-      if (fs.existsSync(oldFilePath)) {
-        fs.unlink(oldFilePath, (error) => {
-          if (error) {
-            console.error("Failed to delete old profile image:", error);
-          } else {
-            console.log("Old profile image deleted.");
-          }
-        });
+    // Delete the previous profile image only after
+    // the new image and MongoDB update succeed.
+    if (oldProfileImagePublicId) {
+      try {
+        await deleteCloudinaryFile(
+          oldProfileImagePublicId,
+          oldProfileImageResourceType || "image"
+        );
+
+        console.log("Old profile image deleted from Cloudinary.");
+      } catch (error) {
+        console.error(
+          "Failed to delete old profile image from Cloudinary:",
+          error
+        );
       }
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Profile image uploaded successfully.",
       profileImage: user.profileImage
     });
   } catch (error) {
-    console.error(error);
+    console.error("Profile upload error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Something went wrong while uploading profile image."
     });
@@ -90,59 +128,72 @@ const uploadDocuments = async (req, res) => {
       });
     }
 
-    const replace = req.query.replace === "true";
+    const folder = `${getUserFolder(user)}/documents`;
+    const uploadedFiles = [];
 
-    const newDocuments = [];
+    try {
+      for (const file of req.files) {
+        // Check whether a document with the same original name already exists
+        const existingDocument = user.documents.find(
+          (document) => document.originalName === file.originalname
+        );
 
-    for (const file of req.files) {
-      const existingDocument = user.documents.find(
-        (document) => document.originalName === file.originalname
-      );
+        const result = await uploadBuffer(file.buffer, {
+          folder,
+          public_id: getFileName(file.originalname),
+          resource_type: "auto"
+        });
 
-      // Duplicate found but replacement was not confirmed
-      if (existingDocument && !replace) {
-        // Delete the newly uploaded duplicate file
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
+        const newDocument = {
+          url: result.secure_url,
+          publicId: result.public_id,
+          resourceType: result.resource_type,
+          originalName: file.originalname
+        };
 
-        return res.status(409).json({
-          success: false,
-          duplicate: true,
-          duplicateName: file.originalname,
-          message: `"${file.originalname}" already exists.`
+        uploadedFiles.push({
+          newDocument,
+          existingDocument
+        });
+      }
+    } catch (error) {
+      // Clean up anything uploaded to Cloudinary if the process fails
+      for (const file of uploadedFiles) {
+        await deleteCloudinaryFile(
+          file.newDocument.publicId,
+          file.newDocument.resourceType
+        ).catch((deleteError) => {
+          console.error(
+            "Failed to clean up Cloudinary document:",
+            deleteError
+          );
         });
       }
 
-      // Replace existing document
-      if (existingDocument && replace) {
-        const oldRelativePath = extractRelativePath(
-          existingDocument.url
-        );
-
-        const oldFilePath = path.join(
-          __dirname,
-          "..",
-          "uploads",
-          oldRelativePath
-        );
-
-        // Delete old physical file
-        if (fs.existsSync(oldFilePath)) {
-          fs.unlinkSync(oldFilePath);
-        }
-
-        // Remove old MongoDB document
-        existingDocument.deleteOne();
-      }
-
-      newDocuments.push({
-        url: buildPublicUrl(req, file),
-        originalName: file.originalname
-      });
+      throw error;
     }
 
-    user.documents.push(...newDocuments);
+    // Replace existing documents with the same name
+    for (const file of uploadedFiles) {
+      if (file.existingDocument) {
+        if (file.existingDocument.publicId) {
+          await deleteCloudinaryFile(
+            file.existingDocument.publicId,
+            file.existingDocument.resourceType || "image"
+          );
+        }
+
+        file.existingDocument.url = file.newDocument.url;
+        file.existingDocument.publicId = file.newDocument.publicId;
+        file.existingDocument.resourceType =
+          file.newDocument.resourceType;
+        file.existingDocument.originalName =
+          file.newDocument.originalName;
+        file.existingDocument.uploadedAt = new Date();
+      } else {
+        user.documents.push(file.newDocument);
+      }
+    }
 
     await user.save();
 
@@ -152,123 +203,11 @@ const uploadDocuments = async (req, res) => {
       documents: user.documents
     });
   } catch (error) {
-    console.error("Upload documents error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Something went wrong while uploading documents."
-    });
-  }
-};
-
-const renameDocument = async (req, res) => {
-  try {
-    const { documentId } = req.params;
-    const { newName } = req.body;
-
-    if (!newName || !newName.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "New file name is required."
-      });
-    }
-
-    const user = await User.findById(req.user._id);
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found."
-      });
-    }
-
-    const document = user.documents.id(documentId);
-
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found."
-      });
-    }
-
-    const trimmedName = newName.trim();
-
-    // Check if another document already has this name
-    const duplicateName = user.documents.find(
-      (item) =>
-        item._id.toString() !== documentId &&
-        item.originalName === trimmedName
-    );
-
-    if (duplicateName) {
-      return res.status(409).json({
-        success: false,
-        message: `"${trimmedName}" already exists.`
-      });
-    }
-
-    const oldRelativePath = extractRelativePath(
-      document.url
-    );
-
-    const oldFilePath = path.join(
-      __dirname,
-      "..",
-      "uploads",
-      oldRelativePath
-    );
-
-    const directory = path.dirname(oldFilePath);
-
-    const extension = path.extname(document.originalName);
-
-    let finalName = trimmedName;
-
-    // Keep the original extension if the user doesn't provide one
-    if (!path.extname(finalName)) {
-      finalName += extension;
-    }
-
-    const newFilePath = path.join(
-      directory,
-      finalName
-    );
-
-    if (fs.existsSync(newFilePath)) {
-      return res.status(409).json({
-        success: false,
-        message: `"${finalName}" already exists.`
-      });
-    }
-
-    fs.renameSync(oldFilePath, newFilePath);
-
-    document.originalName = finalName;
-
-    const newRelativePath = path
-      .relative(
-        path.join(__dirname, "..", "uploads"),
-        newFilePath
-      )
-      .replace(/\\/g, "/");
-
-    document.url = `${req.protocol}://${req.get(
-      "host"
-    )}/uploads/${newRelativePath}`;
-
-    await user.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "Document renamed successfully.",
-      document
-    });
-  } catch (error) {
-    console.error("Rename document error:", error);
+    console.error("Document upload error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Something went wrong while renaming document."
+      message: "Something went wrong while uploading documents."
     });
   }
 };
@@ -295,33 +234,158 @@ const deleteDocument = async (req, res) => {
       });
     }
 
-    const relativePath = extractRelativePath(document.url);
+    if (document.publicId) {
+      try {
+        await deleteCloudinaryFile(
+          document.publicId,
+          document.resourceType || "image"
+        );
+      } catch (error) {
+        console.error(
+          "Failed to delete document from Cloudinary:",
+          error
+        );
 
-    const filePath = path.join(
-      __dirname,
-      "..",
-      "uploads",
-      relativePath
-    );
-
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+        return res.status(500).json({
+          success: false,
+          message: "Could not delete document from Cloudinary."
+        });
+      }
     }
 
     document.deleteOne();
 
     await user.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Document deleted successfully."
     });
   } catch (error) {
     console.error("Delete document error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Something went wrong while deleting document."
+    });
+  }
+};
+
+const renameDocument = async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const { newName } = req.body;
+
+    if (!newName || !newName.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "New document name is required."
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found."
+      });
+    }
+
+    const document = user.documents.id(documentId);
+
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found."
+      });
+    }
+
+    const trimmedName = newName.trim();
+
+    // Keep the original file extension
+    const currentExtension = document.originalName.includes(".")
+      ? document.originalName.substring(
+          document.originalName.lastIndexOf(".")
+        )
+      : "";
+
+    let finalName = trimmedName;
+
+    // If the user does not provide an extension,
+    // keep the existing extension.
+    if (
+      currentExtension &&
+      !finalName
+        .toLowerCase()
+        .endsWith(currentExtension.toLowerCase())
+    ) {
+      finalName += currentExtension;
+    }
+
+    // Check ALL documents, including the current document.
+    // This means renaming pdf-1.pdf to pdf-1 will also
+    // show the duplicate-name message.
+    const duplicateDocument = user.documents.find(
+      (item) =>
+        item.originalName.toLowerCase() ===
+        finalName.toLowerCase()
+    );
+
+    if (duplicateDocument) {
+      return res.status(400).json({
+        success: false,
+        message: "A document with this name already exists."
+      });
+    }
+
+    if (!document.publicId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This document cannot be renamed because its Cloudinary ID is missing."
+      });
+    }
+
+    // Remove extension for Cloudinary public_id
+    const newPublicIdName = finalName
+      .replace(/\.[^/.]+$/, "")
+      .replace(/[^a-zA-Z0-9_-]/g, "-");
+
+    const folder = `${getUserFolder(user)}/documents`;
+    const newPublicId = `${folder}/${newPublicIdName}`;
+
+    const cloudinary = require("../config/cloudinary");
+
+    // Rename the actual Cloudinary file
+    const result = await cloudinary.uploader.rename(
+      document.publicId,
+      newPublicId,
+      {
+        resource_type: document.resourceType || "image",
+        type: "upload",
+        invalidate: true
+      }
+    );
+
+    // Update MongoDB using the values returned by Cloudinary
+    document.originalName = finalName;
+    document.publicId = result.public_id;
+    document.url = result.secure_url;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Document renamed successfully.",
+      document
+    });
+  } catch (error) {
+    console.error("Rename document error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong while renaming the document."
     });
   }
 };

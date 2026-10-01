@@ -1,37 +1,6 @@
 const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const userFolderName = `${req.user._id}_${req.user.fullName.replace(
-      /\s+/g,
-      ""
-    )}`;
-
-    const subFolder =
-      file.fieldname === "profile" ? "profile" : "documents";
-
-    const uploadPath = path.join(
-      __dirname,
-      "..",
-      "uploads",
-      userFolderName,
-      subFolder
-    );
-
-    fs.mkdirSync(uploadPath, { recursive: true });
-
-    cb(null, uploadPath);
-  },
-
-  filename: function (req, file, cb) {
-    const uniqueName =
-      Date.now() + "-" + path.basename(file.originalname);
-
-    cb(null, uniqueName);
-  }
-});
+const storage = multer.memoryStorage();
 
 const profileFilter = (req, file, cb) => {
   if (!file.mimetype.startsWith("image/")) {

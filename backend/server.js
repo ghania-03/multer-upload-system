@@ -1,5 +1,7 @@
-const express = require("express");
 const dotenv = require("dotenv");
+dotenv.config();
+
+const express = require("express");
 const multer = require("multer");
 const cors = require("cors");
 const path = require("path");
@@ -8,7 +10,6 @@ const connectDB = require("./config/db");
 const createTestUser = require("./config/testUser");
 const uploadRoutes = require("./routes/uploadRoutes");
 
-dotenv.config();
 
 const app = express();
 
@@ -34,10 +35,10 @@ app.use((req, res, next) => {
 });
 
 // Serve uploaded files
-app.use(
-  "/uploads",
-  express.static(path.join(__dirname, "uploads"))
-);
+// app.use(
+//   "/uploads",
+//   express.static(path.join(__dirname, "uploads"))
+// );
 
 // Upload routes
 app.use("/api/uploads", uploadRoutes);

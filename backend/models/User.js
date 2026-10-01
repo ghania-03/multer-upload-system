@@ -18,11 +18,31 @@ const userSchema = new mongoose.Schema(
       default: null
     },
 
+    profileImagePublicId: {
+      type: String,
+      default: null
+    },
+
+    profileImageResourceType: {
+      type: String,
+      default: null
+    },
+
     documents: [
       {
         url: {
           type: String,
           required: true
+        },
+
+        publicId: {
+          type: String,
+          default: null
+        },
+
+        resourceType: {
+          type: String,
+          default: null
         },
 
         originalName: {

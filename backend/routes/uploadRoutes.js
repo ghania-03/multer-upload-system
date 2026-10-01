@@ -33,11 +33,6 @@ router.delete(
   deleteDocument
 );
 
-router.patch(
-  "/documents/:documentId/rename",
-  renameDocument
-);
-
 router.get("/me", async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
@@ -63,6 +58,9 @@ router.get("/me", async (req, res) => {
   }
 });
 
-router.delete("/documents/:documentId", deleteDocument);
+router.patch(
+  "/documents/:documentId/rename",
+  renameDocument
+);
 
 module.exports = router;

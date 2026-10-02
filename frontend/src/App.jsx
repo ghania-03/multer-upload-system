@@ -1,17 +1,16 @@
 import { useState } from "react";
-import axios from "axios";
+import api from "./api";
 import ProfileUpload from "./components/ProfileUpload";
 import DocumentUpload from "./components/DocumentUpload";
 import "./App.css";
 
-const API_URL = "http://localhost:5000/api/uploads";
 
 function App() {
   const [user, setUser] = useState(null);
 
   const fetchUser = async () => {
     try {
-      const response = await axios.get(`${API_URL}/me`);
+      const response = await api.get("/me");
       setUser(response.data.user);
     } catch (error) {
       console.error("Failed to fetch user:", error);

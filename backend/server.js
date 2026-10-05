@@ -10,6 +10,18 @@ const createTestUser = require("./config/testUser");
 const uploadRoutes = require("./routes/uploadRoutes");
 
 const app = express();
+let testUserPromise;
+
+const ensureTestUser = () => {
+  if (!testUserPromise) {
+    testUserPromise = createTestUser().catch((error) => {
+      testUserPromise = null;
+      throw error;
+    });
+  }
+
+  return testUserPromise;
+};
 
 app.use(
   cors({
@@ -21,6 +33,27 @@ app.use(
 );
 
 app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Upload API is running."
+  });
+});
+
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    await ensureTestUser();
+    next();
+  } catch (error) {
+    console.error("MongoDB connection failed:", error.message);
+    res.status(503).json({
+      success: false,
+      message: "Database unavailable."
+    });
+  }
+});
 
 // Temporary test user
 app.use((req, res, next) => {
@@ -70,7 +103,7 @@ const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   await connectDB();
-  await createTestUser();
+  await ensureTestUser();
 
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
@@ -79,8 +112,6 @@ const startServer = async () => {
 
 if (process.env.VERCEL !== "1") {
   startServer();
-} else {
-  connectDB();
 }
 
 // Export Express app for Vercel
